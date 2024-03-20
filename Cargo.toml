@@ -1,0 +1,30 @@
+[package]
+name = "cyberspace_pixels"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
+[dependencies]
+anyhow = "1.0.79"
+bevy = { version = "0.13.0", features = [] }
+bevy-async-task = "1.4.0"
+cpal = "0.15.2"
+crossbeam-channel = "0.5.11"
+rand = "0.8.5"
+rustfft = "6.2.0"
+cryptoxide = "0.4.4"
+nostro2 = "0.1.13"
+primitive-types = "0.12.2"
+serde = "1.0.197"
+serde_json = "1.0.114"
+tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+hex = "0.4.3"
+bevy-tokio-tasks = { path = "/home/cuarentaydos/Code/NOSTR/onosendai/bevy-tokio-tasks"} 
