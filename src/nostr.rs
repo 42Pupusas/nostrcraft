@@ -7,24 +7,31 @@ use nostro2::{
     notes::SignedNote,
     relays::{NostrRelay, RelayEvents},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{resources::{MeshesAndMaterials, UniqueKeys, spawn_pubkey_note, spawn_mined_block}, cyberspace::hex_string_to_i_space, POWEvent, POWNotes};
+use crate::{
+    resources::{
+        spawn_mined_block, spawn_pubkey_note, CoordinatesMap, MeshesAndMaterials, UniqueKeys,
+    },
+    POWEvent, POWNotes,
+};
 
 #[derive(Resource, Deref, DerefMut)]
-pub struct IncomingNotes(pub Receiver<POWBlockDetails>);
+pub struct IncomingNotes(pub Receiver<SignedNote>);
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct OutgoingNotes(pub Sender<SignedNote>);
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct POWBlockDetails {
-    pow_amount: usize,
-    coordinates: Vec3,
-    miner_pubkey: String,
+    pub pow_amount: usize,
+    pub coordinates: Vec3,
+    pub miner_pubkey: String,
 }
 
 pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntime>) {
-    let (notes_writer, notes_reader) = unbounded::<POWBlockDetails>();
+    let (notes_writer, notes_reader) = unbounded::<SignedNote>();
     commands.insert_resource(IncomingNotes(notes_reader));
 
     let (outgoing_notes_sender, outgoing_notes_receiver) = unbounded::<SignedNote>();
@@ -33,7 +40,7 @@ pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntim
     runtime.spawn_background_task(|_ctx| async move {
         if let Ok(relay) = NostrRelay::new("wss://relay.arrakis.lat").await {
             let filter = json!({
-                "kinds": [333],
+                "kinds": [0, 333],
             });
 
             let relay_arc = Arc::new(relay);
@@ -44,7 +51,6 @@ pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntim
             tokio::spawn(async move {
                 while let Ok(note) = outgoing_notes_receiver.recv() {
                     let sent = relay.send_note(note).await;
-                    info!("Sent Note TO RELAY: {:?}", sent);
                 }
             });
 
@@ -53,27 +59,7 @@ pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntim
                 while let Some(Ok(relay_message)) = relay.read_from_relay().await {
                     match relay_message {
                         RelayEvents::EVENT(_, _, signed_note) => {
-                            if signed_note.get_tags_by_id("i").is_none() {
-                                continue;
-                            }
-
-                            let coordinate_string = signed_note.get_content();
-                            let coordinates_f32 = hex_string_to_i_space(&coordinate_string);
-                            let coordinates =
-                                Vec3::new(coordinates_f32.0, coordinates_f32.1, coordinates_f32.2);
-                            let miner_pubkey = signed_note.get_pubkey().to_string();
-                            let pow_amount = signed_note
-                                .get_id()
-                                .chars()
-                                .take_while(|c| c == &'0')
-                                .count();
-                            let pow_block_details = POWBlockDetails {
-                                pow_amount,
-                                coordinates,
-                                miner_pubkey,
-                            };
-                            let sent = notes_writer.send(pow_block_details);
-                            info!("Sent POWBlockDetails: {:?}", sent);
+                            let _ = notes_writer.send(signed_note);
                         }
                         RelayEvents::EOSE(_, _) => {
                             info!("End of Stream Event");
@@ -93,24 +79,55 @@ pub fn websocket_middleware(
     mut commands: Commands,
     stuff: Res<MeshesAndMaterials>,
     mut unique_keys: ResMut<UniqueKeys>,
-    _pow_event: EventWriter<POWEvent>,
+    mut coordinates_map: ResMut<CoordinatesMap>,
+    mut pow_event: EventWriter<POWEvent>,
 ) {
     incoming_notes.try_iter().for_each(|note| {
-        if !unique_keys.contains(&note.miner_pubkey) {
-            unique_keys.insert(note.miner_pubkey.clone());
-            info!("Unique Keys: {:?}", unique_keys);
-            spawn_pubkey_note(&mut commands, &stuff, note.miner_pubkey.clone());
+        if !unique_keys.contains(note.get_pubkey()) {
+            spawn_pubkey_note(&mut commands, &stuff, note.get_pubkey().to_string());
+            unique_keys.insert(note.get_pubkey().to_string());
         }
-        spawn_mined_block(
-            &mut commands,
-            &stuff,
-            note.coordinates,
-            note.pow_amount,
-            note.miner_pubkey.clone(),
-        );
+
+        if let Ok(pow_block_details) = serde_json::from_str::<POWBlockDetails>(&note.get_content())
+        {
+            if !coordinates_map.contains_key(&pow_block_details.coordinates.to_string()) {
+                let spawned_block = spawn_mined_block(
+                    &mut commands,
+                    &stuff,
+                    pow_block_details.coordinates,
+                    pow_block_details.pow_amount,
+                    pow_block_details.miner_pubkey.clone(),
+                );
+                coordinates_map.insert(
+                    pow_block_details.coordinates.to_string(),
+                    (spawned_block, pow_block_details.clone()),
+                );
+            } else {
+                let existing_pow_block = coordinates_map
+                    .get(&pow_block_details.coordinates.to_string())
+                    .unwrap();
+
+                let existing_entity = existing_pow_block.0;
+
+                if pow_block_details.pow_amount > existing_pow_block.1.pow_amount {
+                    let spawned_block = spawn_mined_block(
+                        &mut commands,
+                        &stuff,
+                        pow_block_details.coordinates,
+                        pow_block_details.pow_amount,
+                        pow_block_details.miner_pubkey.clone(),
+                    );
+                    coordinates_map.insert(
+                        pow_block_details.coordinates.to_string(),
+                        (spawned_block, pow_block_details.clone()),
+                    );
+                    commands.entity(existing_entity).despawn();
+                }
+            }
+        }
     });
+
     pow_notes.try_iter().for_each(|note| {
         let sent = outgoing_notes.send(note);
-        info!("Sent POW Note: {:?}", sent);
     });
 }
