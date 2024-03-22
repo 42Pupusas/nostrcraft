@@ -27,4 +27,5 @@ serde = "1.0.197"
 serde_json = "1.0.114"
 tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 hex = "0.4.3"
-bevy-tokio-tasks = { path = "/home/cuarentaydos/Code/NOSTR/onosendai/bevy-tokio-tasks"} 
+# Had to fork bevy-tokio-tasks to make it work with the latest bevy
+bevy-tokio-tasks = { path = "bevy-tokio-tasks"} 
