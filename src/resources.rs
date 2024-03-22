@@ -212,13 +212,10 @@ pub fn spawn_pubkey_note(
         scaled_x, scaled_y, scaled_z
     );
 
-    let new_planet = commands
-        .spawn(PbrBundle {
-            mesh: stuff.pubkey_mesh.clone_weak(),
-            material: stuff.clear_material.clone_weak(),
-            transform: Transform::from_translation(Vec3::new(scaled_x, scaled_y, scaled_z)),
-            ..Default::default()
-        })
-        .id();
-    info!("New planet: {:?}", new_planet);
+    commands.spawn(PbrBundle {
+        mesh: stuff.pubkey_mesh.clone_weak(),
+        material: stuff.clear_material.clone_weak(),
+        transform: Transform::from_translation(Vec3::new(scaled_x, scaled_y, scaled_z)),
+        ..Default::default()
+    });
 }

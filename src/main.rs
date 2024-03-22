@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use bevy::{
-    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
-    prelude::*,
-};
+use bevy::prelude::*;
 
 use bevy_tokio_tasks::{TokioTasksPlugin, TokioTasksRuntime};
 
@@ -17,7 +14,7 @@ use nostro2::{
 };
 
 use crossbeam_channel::{unbounded, Receiver};
-use resources::{world_plugin, CoordinatesMap, MeshesAndMaterials, POWBlock};
+use resources::{world_plugin, MeshesAndMaterials};
 use serde_json::json;
 
 use crate::nostr::POWBlockDetails;
@@ -44,11 +41,11 @@ fn main() {
                 ..default()
             }),
             // Adds frame time diagnostics
-            FrameTimeDiagnosticsPlugin,
+            // FrameTimeDiagnosticsPlugin,
             // Adds a system that prints diagnostics to the console
-            LogDiagnosticsPlugin::default(),
+            // LogDiagnosticsPlugin::default(),
             // Any plugin can register diagnostics. Uncomment this to add an entity count diagnostics:
-            bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
+            // bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
             // Uncomment this to add an asset count diagnostics:
             // bevy::asset::diagnostic::AssetCountDiagnosticsPlugin::<Texture>::default(),
             // Uncomment this to add system info diagnostics:

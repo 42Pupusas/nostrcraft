@@ -83,6 +83,7 @@ pub fn websocket_middleware(
     mut pow_event: EventWriter<POWEvent>,
 ) {
     incoming_notes.try_iter().for_each(|note| {
+
         if !unique_keys.contains(note.get_pubkey()) {
             spawn_pubkey_note(&mut commands, &stuff, note.get_pubkey().to_string());
             unique_keys.insert(note.get_pubkey().to_string());
