@@ -1,5 +1,5 @@
 [package]
-name = "cyberspace_pixels"
+name = "nostr_craft"
 version = "0.1.0"
 edition = "2021"
 
@@ -25,7 +25,8 @@ nostro2 = "0.1.13"
 primitive-types = "0.12.2"
 serde = "1.0.197"
 serde_json = "1.0.114"
-tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 hex = "0.4.3"
 # Had to fork bevy-tokio-tasks to make it work with the latest bevy
 bevy-tokio-tasks = { path = "bevy-tokio-tasks"} 
+tokio-util = { version = "0.7.10", features = ["full"] }

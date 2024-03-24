@@ -1,6 +1,7 @@
 use crate::{
-    cyberspace::{extract_coordinates, scale_coordinates_to_world},
-    resources::{MeshesAndMaterials, NostrSigner},
+    cyberspace::{encode_coordinates, extract_coordinates, scale_coordinates_to_world},
+    resources::{CoordinatesMap, MeshesAndMaterials, UniqueKeys},
+    MiningKeypair,
 };
 
 use bevy::{
@@ -12,14 +13,18 @@ use bevy::{
 };
 
 pub fn camera_plugin(app: &mut App) {
-    app.add_systems(PostStartup, setup_camera_ui).add_systems(
-        Update,
-        (
-            camera_look_system,
-            move_block_indicator,
-            display_coordinates,
-        ),
-    );
+    app.init_resource::<AvatarListDetails>()
+        .add_systems(PostStartup, setup_camera_ui)
+        .add_systems(
+            Update,
+            (
+                camera_look_system,
+                move_block_indicator,
+                display_coordinates,
+                display_avatars,
+                return_home,
+            ),
+        );
 }
 
 #[derive(Component)]
@@ -33,6 +38,15 @@ impl Default for CameraState {
         CameraState {}
     }
 }
+
+const CAMERA_ORBIT_LOCATION: Vec3 = Vec3::new(4.0, 21.0, 21.0);
+const CAMERA_ORBIT_LOOK_AT: Vec3 = Vec3::ZERO;
+
+const MARGIN_UI: UiRect = UiRect::all(Val::Percent(2.1));
+const PADDING_UI: UiRect = UiRect::all(Val::Percent(1.4));
+const BORDER_WIDTH: UiRect = UiRect::all(Val::Px(4.2));
+const LIGHT_GRAY: Color = Color::rgb(0.7, 0.7, 0.7);
+const UI_FONT_SIZE: f32 = 21.0;
 
 #[derive(Bundle)]
 pub struct ExplorerCameraBundle(Camera3dBundle, ExplorerCamera, BloomSettings, CameraState);
@@ -64,10 +78,21 @@ impl ExplorerCameraBundle {
     }
 }
 
+#[derive(Component)]
+pub enum UiElement {
+    CurrentCoordinates,
+    CoordinateString,
+    CoordinateOwner,
+    AvatarList(usize),
+    TeleportingNotice(f32),
+    MiningKey,
+    MiningNotice,
+}
+
 fn setup_camera_ui(
     mut commands: Commands,
     assets: Res<MeshesAndMaterials>,
-    nostr_signer: Res<NostrSigner>,
+    nostr_signer: Res<MiningKeypair>,
 ) {
     let pubkey = nostr_signer.get_public_key();
     info!("Public Key: {:?}", pubkey);
@@ -80,12 +105,11 @@ fn setup_camera_ui(
         scale_coordinates.1,
         scale_coordinates.2,
     );
-    info!("Scaled Coordinates: {:?}", scale_coordinates);
+    info!(
+        "Home Position: X: {} Y: {} Z: {}",
+        scale_coordinates.0, scale_coordinates.1, scale_coordinates.2
+    );
 
-    let location = Vec3::new(0., 0., -10.0);
-    let look_at = Vec3::ZERO;
-    // Setup a ghot block to indicate the player's location
-    // And a camera as a child so it will orbit the block
     commands
         .spawn((
             PbrBundle {
@@ -97,30 +121,405 @@ fn setup_camera_ui(
             BlockIndicator,
         ))
         .with_children(|builder| {
-            builder.spawn(ExplorerCameraBundle::new_default(location, look_at));
+            builder.spawn(ExplorerCameraBundle::new_default(
+                CAMERA_ORBIT_LOCATION,
+                CAMERA_ORBIT_LOOK_AT,
+            ));
         });
 
-    // Creates small UI node on the corner to sow coordinates
-    commands.spawn((
-        // Create a TextBundle that has a Text with a single section.
-        TextBundle::from_section(
-            // Accepts a `String` or any type that converts into a `String`, such as `&str`
-            "hello\nbevy!",
+    let coordinates_ui = NodeBundle {
+        style: Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+            left: Val::Px(0.0),
+            margin: MARGIN_UI,
+            padding: PADDING_UI,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::SpaceEvenly,
+            align_items: AlignItems::Center,
+            border: BORDER_WIDTH,
+            ..Default::default()
+        },
+        border_color: BorderColor(LIGHT_GRAY),
+        ..Default::default()
+    };
+    commands
+        .spawn(coordinates_ui)
+        .with_children(|coordinates_ui| {
+            let home_title = TextBundle::from_section(
+                "Coordinate Hex:",
+                TextStyle {
+                    font_size: UI_FONT_SIZE,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            )
+            .with_style(Style {
+                margin: MARGIN_UI,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            });
+            let home_coordinates = TextBundle::from_section(
+                format!("{}...{}", &pubkey[..8], &pubkey[pubkey.len() - 8..]),
+                TextStyle {
+                    font_size: UI_FONT_SIZE,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            )
+            .with_style(Style {
+                margin: MARGIN_UI,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            });
+            let current_coordinate_title = TextBundle::from_section(
+                "Current Coordinates:",
+                TextStyle {
+                    font_size: UI_FONT_SIZE,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            )
+            .with_style(Style {
+                margin: MARGIN_UI,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            });
+            let current_coordinates = TextBundle::from_section(
+                format!(
+                    "X: {} Y: {} Z: {}",
+                    scale_coordinates.0, scale_coordinates.1, scale_coordinates.2
+                ),
+                TextStyle {
+                    font_size: UI_FONT_SIZE,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            )
+            .with_style(Style {
+                margin: MARGIN_UI,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            });
+            let coordinate_owner = TextBundle::from_section(
+                "",
+                TextStyle {
+                    font_size: UI_FONT_SIZE,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            )
+            .with_style(Style {
+                margin: MARGIN_UI,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            });
+
+            coordinates_ui.spawn(current_coordinate_title);
+            coordinates_ui.spawn((current_coordinates, UiElement::CurrentCoordinates));
+            coordinates_ui.spawn(home_title);
+            coordinates_ui.spawn((home_coordinates, UiElement::CoordinateString));
+            coordinates_ui.spawn((coordinate_owner, UiElement::CoordinateOwner));
+        });
+
+    let avatars_ui = NodeBundle {
+        style: Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+            right: Val::Px(0.0),
+            margin: MARGIN_UI,
+            padding: PADDING_UI,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::SpaceEvenly,
+            align_items: AlignItems::Center,
+            border: BORDER_WIDTH,
+            ..Default::default()
+        },
+        border_color: BorderColor(LIGHT_GRAY),
+        ..Default::default()
+    };
+
+    commands.spawn(avatars_ui).with_children(|avatars_ui| {
+        let avatar_title = TextBundle::from_section(
+            "Avatars:",
             TextStyle {
-                font_size: 21.0,
+                font_size: UI_FONT_SIZE,
+                color: Color::WHITE,
                 ..default()
             },
-        ) // Set the justification of the Text
-        .with_text_justify(JustifyText::Center)
-        // Set the style of the TextBundle itself.
+        )
         .with_style(Style {
+            margin: MARGIN_UI,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        });
+        avatars_ui.spawn(avatar_title);
+
+        for i in 0..5 {
+            let avatar_list = TextBundle::from_section(
+                "",
+                TextStyle {
+                    font_size: UI_FONT_SIZE,
+                    color: Color::WHITE,
+                    ..default()
+                },
+            )
+            .with_style(Style {
+                margin: MARGIN_UI,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            });
+            avatars_ui.spawn((avatar_list, UiElement::AvatarList(i)));
+        }
+        let teleporting_notice = TextBundle::from_section(
+            "",
+            TextStyle {
+                font_size: UI_FONT_SIZE,
+                color: Color::WHITE,
+                ..default()
+            },
+        )
+        .with_style(Style {
+            margin: MARGIN_UI,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        });
+        avatars_ui.spawn((teleporting_notice, UiElement::TeleportingNotice(0.0)));
+    });
+
+    let mining_ui = NodeBundle {
+        style: Style {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(5.0),
-            right: Val::Px(5.0),
-            ..default()
-        }),
-        ColorText,
-    ));
+            top: Val::Px(0.0),
+            left: Val::Px(0.0),
+            margin: MARGIN_UI,
+            padding: PADDING_UI,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::SpaceEvenly,
+            align_items: AlignItems::Center,
+            border: BORDER_WIDTH,
+            ..Default::default()
+        },
+        border_color: BorderColor(LIGHT_GRAY),
+        ..Default::default()
+    };
+    commands.spawn(mining_ui).with_children(|mining_ui| {
+        let mining_title = TextBundle::from_section(
+            "Mining Details:",
+            TextStyle {
+                font_size: UI_FONT_SIZE,
+                color: Color::WHITE,
+                ..default()
+            },
+        )
+        .with_style(Style {
+            margin: MARGIN_UI,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        });
+        mining_ui.spawn(mining_title);
+
+        let mining_key = TextBundle::from_section(
+            format!(
+                "Mining Key: {}...{}",
+                &pubkey[..8],
+                &pubkey[pubkey.len() - 8..]
+            ),
+            TextStyle {
+                font_size: UI_FONT_SIZE,
+                color: Color::WHITE,
+                ..default()
+            },
+        )
+        .with_style(Style {
+            margin: MARGIN_UI,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        });
+
+        mining_ui.spawn((mining_key, UiElement::MiningKey));
+
+        let mining_notice = TextBundle::from_section(
+            "",
+            TextStyle {
+                font_size: UI_FONT_SIZE,
+                color: Color::WHITE,
+                ..default()
+            },
+        )
+        .with_style(Style {
+            margin: MARGIN_UI,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        });
+
+        mining_ui.spawn((mining_notice, UiElement::MiningNotice));
+    });
+}
+
+#[derive(Resource)]
+struct AvatarListDetails {
+    selected: usize,
+    coordinate_string: String,
+    teleport_progress: f32,
+}
+
+impl Default for AvatarListDetails {
+    fn default() -> Self {
+        AvatarListDetails {
+            selected: 0,
+            coordinate_string: String::new(),
+            teleport_progress: 0.0,
+        }
+    }
+}
+
+fn return_home(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut camera_query: Query<&mut Transform, With<BlockIndicator>>,
+    nostr_signer: Res<MiningKeypair>,
+    mut avatar_list: ResMut<AvatarListDetails>,
+    mut text_query: Query<(&mut Text, &UiElement)>,
+) {
+    if keyboard_input.pressed(KeyCode::Home) {
+        while avatar_list.teleport_progress < 100.0 {
+            avatar_list.teleport_progress += 1.0;
+            for (mut text, ui_entity) in text_query.iter_mut() {
+                if let UiElement::TeleportingNotice(_) = ui_entity {
+                    text.sections[0].value =
+                        format!("Home... {:.2}%", avatar_list.teleport_progress);
+                }
+            }
+            return;
+        }
+        avatar_list.teleport_progress = 0.0;
+        for (mut text, ui_entity) in text_query.iter_mut() {
+            if let UiElement::TeleportingNotice(_) = ui_entity {
+                text.sections[0].value = String::new();
+            }
+        }
+        let pubkey = nostr_signer.get_public_key();
+        let home_coordinates = extract_coordinates(&pubkey).unwrap();
+        let scale_coordinates =
+            scale_coordinates_to_world(home_coordinates.0, home_coordinates.1, home_coordinates.2);
+        let home_vec = Vec3::new(
+            scale_coordinates.0,
+            scale_coordinates.1,
+            scale_coordinates.2,
+        );
+
+        let mut camera_transform = camera_query.single_mut();
+        camera_transform.translation = home_vec;
+    }
+
+    if keyboard_input.just_released(KeyCode::Home) {
+        for (mut text, ui_entity) in text_query.iter_mut() {
+            if let UiElement::TeleportingNotice(_) = ui_entity {
+                text.sections[0].value = String::new();
+                avatar_list.teleport_progress = 0.0;
+            }
+        }
+    }
+}
+
+fn display_avatars(
+    unique_keys: Res<UniqueKeys>,
+    mut text_query: Query<(&mut Text, &UiElement)>,
+    mut avatar_list: ResMut<AvatarListDetails>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut camera_query: Query<&mut Transform, With<BlockIndicator>>,
+) {
+    if unique_keys.len() == 0 {
+        return;
+    }
+
+    let keys_vec: Vec<&String> = unique_keys.iter().collect(); // Convert HashSet to Vec
+
+    let list_len = keys_vec.len();
+    let middle_index = 2; // Middle index for a list of 5 items
+    let selected_index = (avatar_list.selected + list_len / 2) % list_len; // Calculate selected index based on list length and ensure it's in the middle
+
+    for (i, _key) in (0..5).enumerate() {
+        let index = (selected_index + i - middle_index + list_len) % list_len; // Calculate the index to display, ensuring it wraps around and the selected index is in the middle
+
+        // Get the corresponding Text component and UiElement tag
+        for (mut text, ui_entity) in text_query.iter_mut() {
+            if let UiElement::AvatarList(j) = ui_entity {
+                if j == &i {
+                    let avatar_key = keys_vec[index];
+                    text.sections[0].value = format!(
+                        "{}...{}",
+                        &avatar_key[..8],
+                        &avatar_key[avatar_key.len() - 8..]
+                    );
+                    // Set text color based on whether the current index matches the selected index
+                    if index == selected_index {
+                        text.sections[0].style.color = Color::GREEN;
+                        avatar_list.coordinate_string = avatar_key.to_string();
+                    } else {
+                        text.sections[0].style.color = Color::WHITE;
+                    }
+                }
+            }
+        }
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Delete) {
+        avatar_list.selected = (avatar_list.selected + 1) % list_len; // Wrap around when reaching the end
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Insert) {
+        avatar_list.selected = (avatar_list.selected + list_len - 1) % list_len;
+        // Wrap around when reaching the beginning
+    }
+
+    let mut camera_transform = camera_query.single_mut();
+    if keyboard_input.pressed(KeyCode::End) {
+        for (mut text, ui_entity) in text_query.iter_mut() {
+            if let UiElement::TeleportingNotice(_) = ui_entity {
+                text.sections[0].value =
+                    format!("Teleporting... {:.2}%", avatar_list.teleport_progress);
+                if avatar_list.teleport_progress < 100.0 {
+                    avatar_list.teleport_progress += 1.0;
+                    info!("Teleporting... {:.2}%", avatar_list.teleport_progress);
+                } else {
+                    avatar_list.teleport_progress = 0.0;
+                    text.sections[0].value = String::new();
+                    info!("Selected Avatar: {}", avatar_list.coordinate_string);
+                    let coordinates = extract_coordinates(&avatar_list.coordinate_string).unwrap();
+                    let scale_coordinates =
+                        scale_coordinates_to_world(coordinates.0, coordinates.1, coordinates.2);
+                    let vec = Vec3::new(
+                        scale_coordinates.0,
+                        scale_coordinates.1,
+                        scale_coordinates.2,
+                    );
+
+                    camera_transform.translation = vec;
+                }
+            }
+        }
+    }
+
+    if keyboard_input.just_released(KeyCode::End) {
+        for (mut text, ui_entity) in text_query.iter_mut() {
+            if let UiElement::TeleportingNotice(_) = ui_entity {
+                text.sections[0].value = String::new();
+                avatar_list.teleport_progress = 0.0;
+            }
+        }
+    }
 }
 
 fn camera_look_system(
@@ -161,15 +560,53 @@ struct ColorText;
 
 fn display_coordinates(
     query: Query<&Transform, With<BlockIndicator>>,
-    mut text_query: Query<&mut Text>,
+    mut text_query: Query<(&mut Text, &UiElement)>,
+    mined_blocks: Res<CoordinatesMap>,
 ) {
-    // need to log the coordinates of the mouse click
-    let transform = query.single();
-    let x = transform.translation.x;
-    let y = transform.translation.y;
-    let z = transform.translation.z;
-    for mut text in text_query.iter_mut() {
-        text.sections[0].value = format!("x: {}\ny: {}\nz: {}", x, y, z);
+    if let Ok(transform) = query.get_single() {
+        let x = transform.translation.x;
+        let y = transform.translation.y;
+        let z = transform.translation.z;
+
+        let rounded_x = x.round();
+        let rounded_y = y.round();
+        let rounded_z = z.round();
+
+        let x_i128 = rounded_x as i128;
+        let y_i128 = rounded_y as i128;
+        let z_i128 = rounded_z as i128;
+
+        let coordinate_string = encode_coordinates(x_i128, y_i128, z_i128);
+
+        for (mut text, ui_entity) in text_query.iter_mut() {
+            match ui_entity {
+                UiElement::CurrentCoordinates => {
+                    let current_coordinates =
+                        format!("X: {} Y: {} Z: {}", rounded_x, rounded_y, rounded_z);
+                    text.sections[0].value = current_coordinates;
+                }
+
+                UiElement::CoordinateString => {
+                    text.sections[0].value = format!(
+                        "{}...{}",
+                        &coordinate_string[..8],
+                        &coordinate_string[coordinate_string.len() - 8..]
+                    );
+                }
+                UiElement::CoordinateOwner => {
+                    if let Some(owner) = mined_blocks.get(&coordinate_string) {
+                        text.sections[0].value = format!(
+                            "Owner: {}...{}",
+                            &owner.1.miner_pubkey[..8],
+                            &owner.1.miner_pubkey[owner.1.miner_pubkey.len() - 8..]
+                        );
+                    } else {
+                        text.sections[0].value = String::new();
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 

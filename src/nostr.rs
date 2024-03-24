@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
+    cyberspace::extract_coordinates,
     resources::{
         spawn_mined_block, spawn_pubkey_note, CoordinatesMap, MeshesAndMaterials, UniqueKeys,
     },
-    POWEvent, POWNotes,
+    POWNotes,
 };
 
 #[derive(Resource, Deref, DerefMut)]
@@ -26,8 +27,18 @@ pub struct OutgoingNotes(pub Sender<SignedNote>);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct POWBlockDetails {
     pub pow_amount: usize,
-    pub coordinates: Vec3,
+    pub coordinates: String,
     pub miner_pubkey: String,
+}
+
+impl POWBlockDetails {
+    pub fn coordinates(&self) -> Vec3 {
+        if let Ok((x, y, z)) = extract_coordinates(&self.coordinates) {
+            Vec3::new(x as f32, y as f32, z as f32)
+        } else {
+            Vec3::new(0.0, 0.0, 0.0)
+        }
+    }
 }
 
 pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntime>) {
@@ -50,7 +61,7 @@ pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntim
 
             tokio::spawn(async move {
                 while let Ok(note) = outgoing_notes_receiver.recv() {
-                    let sent = relay.send_note(note).await;
+                    let _sent = relay.send_note(note).await;
                 }
             });
 
@@ -80,10 +91,8 @@ pub fn websocket_middleware(
     stuff: Res<MeshesAndMaterials>,
     mut unique_keys: ResMut<UniqueKeys>,
     mut coordinates_map: ResMut<CoordinatesMap>,
-    mut pow_event: EventWriter<POWEvent>,
 ) {
     incoming_notes.try_iter().for_each(|note| {
-
         if !unique_keys.contains(note.get_pubkey()) {
             spawn_pubkey_note(&mut commands, &stuff, note.get_pubkey().to_string());
             unique_keys.insert(note.get_pubkey().to_string());
@@ -91,11 +100,11 @@ pub fn websocket_middleware(
 
         if let Ok(pow_block_details) = serde_json::from_str::<POWBlockDetails>(&note.get_content())
         {
-            if !coordinates_map.contains_key(&pow_block_details.coordinates.to_string()) {
+            if !coordinates_map.contains_key(&pow_block_details.coordinates) {
                 let spawned_block = spawn_mined_block(
                     &mut commands,
                     &stuff,
-                    pow_block_details.coordinates,
+                    pow_block_details.coordinates(),
                     pow_block_details.pow_amount,
                     pow_block_details.miner_pubkey.clone(),
                 );
@@ -104,9 +113,9 @@ pub fn websocket_middleware(
                     (spawned_block, pow_block_details.clone()),
                 );
             } else {
-                let existing_pow_block = coordinates_map
-                    .get(&pow_block_details.coordinates.to_string())
-                    .unwrap();
+
+                let existing_pow_block =
+                    coordinates_map.get(&pow_block_details.coordinates).unwrap();
 
                 let existing_entity = existing_pow_block.0;
 
@@ -114,7 +123,7 @@ pub fn websocket_middleware(
                     let spawned_block = spawn_mined_block(
                         &mut commands,
                         &stuff,
-                        pow_block_details.coordinates,
+                        pow_block_details.coordinates(),
                         pow_block_details.pow_amount,
                         pow_block_details.miner_pubkey.clone(),
                     );
@@ -129,6 +138,6 @@ pub fn websocket_middleware(
     });
 
     pow_notes.try_iter().for_each(|note| {
-        let sent = outgoing_notes.send(note);
+        let _sent = outgoing_notes.send(note);
     });
 }

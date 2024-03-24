@@ -2,7 +2,6 @@ use bevy::{
     prelude::*,
     utils::{HashMap, HashSet},
 };
-use nostro2::userkeys::UserKeys;
 
 use crate::{
     cyberspace::{extract_coordinates, scale_coordinates_to_world},
@@ -17,26 +16,15 @@ pub const MITHRIL: Color = Color::rgba(0.482, 0.408, 0.776, 1.0);
 pub const ADAMANT: Color = Color::rgba(0.443, 0.651, 0.475, 1.0);
 pub const RUNE: Color = Color::rgba(0.416, 0.569, 0.824, 1.0);
 pub const GOLD: Color = Color::rgba(0.855, 0.647, 0.125, 1.0);
+const STAR_COLOR: Color = Color::rgba_linear(1000.0, 1000., 1000., 0.01);
+
+const BLOCK_SIZE: Vec3 = Vec3::splat(0.5);
+const PUBKEY_SIZE: f32 = 1.0;
 
 pub fn world_plugin(app: &mut App) {
-    app.init_resource::<NostrSigner>()
-        .init_resource::<UniqueKeys>()
+    app.init_resource::<UniqueKeys>()
         .init_resource::<CoordinatesMap>()
         .add_systems(Startup, setup_world);
-}
-
-// KEY 55BE2A31916E238A5D21F44DEAF7FA2579D11EEEB98D022842A15A2C7AF2F106
-
-#[derive(Resource, Deref, DerefMut)]
-pub struct NostrSigner(pub UserKeys);
-
-impl Default for NostrSigner {
-    fn default() -> Self {
-        NostrSigner(
-            UserKeys::new("55BE2A31916E238A5D21F44DEAF7FA2579D11EEEB98D022842A15A2C7AF2F106")
-                .unwrap(),
-        )
-    }
 }
 
 #[derive(Resource, Deref, DerefMut, Debug)]
@@ -79,16 +67,16 @@ fn setup_world(
 ) {
     // Load handles for reusable assets
     let cube_mesh = meshes.add(Mesh::from(Cuboid {
-        half_size: Vec3::splat(0.5),
+        half_size: BLOCK_SIZE,
         ..Default::default()
     }));
     let pubkey_mesh = meshes.add(Mesh::from(Sphere {
-        radius: 0.5,
+        radius: PUBKEY_SIZE,
         ..Default::default()
     }));
 
     let clear_material = materials.add(StandardMaterial {
-        emissive: Color::rgba_linear(1000.0, 1000., 1000., 0.01),
+        emissive: STAR_COLOR,
         alpha_mode: AlphaMode::Add,
         ..Default::default()
     });

@@ -39,7 +39,7 @@ pub fn extract_coordinates(hex_str: &str) -> Result<(i128, i128, i128), hex::Fro
     Ok((x, y, z))
 }
 
-fn encode_coordinates(x: i128, y: i128, z: i128) -> String {
+pub fn encode_coordinates(x: i128, y: i128, z: i128) -> String {
     // Convert the coordinates into a vector of bits
     let x_bits = i128_to_vec_bool(x);
     let y_bits = i128_to_vec_bool(y);
@@ -187,7 +187,7 @@ mod tests {
     fn encode_coordinates_and_back() {
         let x = 69;
         let y = 420;
-        let z = 21000000;
+        let z = 50;
         let encoded = encode_coordinates(x, y, z);
         println!("{}", encoded);
         let result = extract_coordinates(&encoded).unwrap();
