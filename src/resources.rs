@@ -1,4 +1,5 @@
 use bevy::{
+    pbr::CascadeShadowConfigBuilder,
     prelude::*,
     utils::{HashMap, HashSet},
 };
@@ -8,14 +9,14 @@ use crate::{
     nostr::POWBlockDetails,
 };
 
-pub const TERRACOTA: &str = "E26F57";
-pub const BRONZE: Color = Color::rgba(0.804, 0.498, 0.196, 1.0);
-pub const IRON: Color = Color::rgba(0.435, 0.502, 0.564, 1.0);
-pub const STEEL: Color = Color::rgba(0.627, 0.627, 0.627, 1.0);
-pub const MITHRIL: Color = Color::rgba(0.482, 0.408, 0.776, 1.0);
-pub const ADAMANT: Color = Color::rgba(0.443, 0.651, 0.475, 1.0);
-pub const RUNE: Color = Color::rgba(0.416, 0.569, 0.824, 1.0);
-pub const GOLD: Color = Color::rgba(0.855, 0.647, 0.125, 1.0);
+pub const BRONZE: Color = Color::rgba_linear(0.804, 0.498, 0.196, 1.0);
+pub const IRON: Color = Color::rgba_linear(0.435, 0.502, 0.564, 1.0);
+pub const STEEL: Color = Color::rgba_linear(0.627, 0.627, 0.627, 1.0);
+pub const MITHRIL: Color = Color::rgba_linear(0.482 * 10., 0.408 * 10., 0.776 * 10., 1.0);
+pub const ADAMANT: Color = Color::rgba_linear(0.443 * 10., 0.651 * 10., 0.475 * 10., 1.0);
+pub const RUNE: Color = Color::rgba_linear(0.416 * 10., 0.569 * 10., 0.824 * 10., 1.0);
+pub const GOLD: Color = Color::rgba_linear(0.855 * 10., 0.647 * 10., 0.125 * 10., 1.0);
+
 const STAR_COLOR: Color = Color::rgba_linear(1000.0, 1000., 1000., 0.01);
 
 const BLOCK_SIZE: Vec3 = Vec3::splat(0.5);
@@ -64,7 +65,27 @@ fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
+    // Add a light source
+    let cascade_shadow_config = CascadeShadowConfigBuilder {
+        first_cascade_far_bound: 0.3,
+        maximum_distance: 3.0,
+        ..default()
+    }
+    .build();
+    commands.spawn(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            color: Color::rgb(0.98, 0.95, 0.82),
+            shadows_enabled: true,
+            ..default()
+        },
+        transform: Transform::from_xyz(0., f32::MAX, 0.)
+            .looking_at(Vec3::new(-0.15, -0.05, 0.25), Vec3::Y),
+        cascade_shadow_config,
+        ..default()
+    });
+
     // Load handles for reusable assets
     let cube_mesh = meshes.add(Mesh::from(Cuboid {
         half_size: BLOCK_SIZE,
@@ -81,50 +102,91 @@ fn setup_world(
         ..Default::default()
     });
 
+    let clay_texture = asset_server.load("textures/clay.png");
     let mud_material = materials.add(StandardMaterial {
-        base_color: Color::hex(TERRACOTA).unwrap(),
+        base_color_texture: Some(clay_texture),
+        metallic: 0.0,
+        perceptual_roughness: 0.8,
+        reflectance: 0.1,
         ..Default::default()
     });
 
+    let bronze_texture = asset_server.load("textures/bronze.png");
     let bronze_material = materials.add(StandardMaterial {
-        base_color: BRONZE,
+        base_color_texture: Some(bronze_texture),
         emissive: BRONZE,
+        metallic: 0.8,
+        perceptual_roughness: 0.4,
+        reflectance: 0.2,
         ..Default::default()
     });
 
+    let iron_texture = asset_server.load("textures/iron.png");
     let iron_material = materials.add(StandardMaterial {
-        base_color: IRON,
+        base_color_texture: Some(iron_texture),
         emissive: IRON,
+        metallic: 0.8,
+        perceptual_roughness: 0.3,
+        reflectance: 0.4,
         ..Default::default()
     });
 
+    let steel_texture = asset_server.load("textures/steel.png");
     let steel_material = materials.add(StandardMaterial {
-        base_color: STEEL,
+        base_color_texture: Some(steel_texture),
         emissive: STEEL,
+        metallic: 0.9,
+        perceptual_roughness: 0.2,
+        reflectance: 0.8,
         ..Default::default()
     });
 
+    let mithril_texture = asset_server.load("textures/mithril.png");
     let mithril_material = materials.add(StandardMaterial {
-        base_color: MITHRIL,
+        base_color_texture: Some(mithril_texture),
         emissive: MITHRIL,
+        metallic: 0.2,
+        perceptual_roughness: 0.99,
+        reflectance: 0.02,
+        ior: 1.69,
+        specular_transmission: 0.8,
+        alpha_mode: AlphaMode::Blend,
         ..Default::default()
     });
 
+    let adamant_texture = asset_server.load("textures/adamant.png");
     let adamant_material = materials.add(StandardMaterial {
-        base_color: ADAMANT,
+        base_color_texture: Some(adamant_texture),
         emissive: ADAMANT,
+        metallic: 0.2,
+        perceptual_roughness: 0.99,
+        reflectance: 0.01,
+        ior: 1.77,
+        specular_transmission: 0.8,
+        alpha_mode: AlphaMode::Blend,
         ..Default::default()
     });
 
+    let rune_texture = asset_server.load("textures/rune.png");
     let rune_material = materials.add(StandardMaterial {
-        base_color: RUNE,
+        base_color_texture: Some(rune_texture),
         emissive: RUNE,
+        metallic: 0.2,
+        perceptual_roughness: 0.99,
+        reflectance: 0.01,
+        ior: 2.42,
+        specular_transmission: 0.9,
+        alpha_mode: AlphaMode::Blend,
         ..Default::default()
     });
 
+    let gold_texture = asset_server.load("textures/gold.png");
     let gold_material = materials.add(StandardMaterial {
-        base_color: GOLD,
+        base_color_texture: Some(gold_texture),
         emissive: GOLD,
+        metallic: 0.9,
+        perceptual_roughness: 0.1,
+        reflectance: 0.9,
         ..Default::default()
     });
 
@@ -153,11 +215,9 @@ pub struct POWBlock {
 pub fn spawn_mined_block(
     commands: &mut Commands,
     stuff: &Res<MeshesAndMaterials>,
-    coordinates: Vec3,
-    pow_amount: usize,
-    miner_pubkey: String,
+    block_details: &POWBlockDetails,
 ) -> Entity {
-    let material = match pow_amount {
+    let material = match block_details.pow_amount {
         0 => stuff.mud_material.clone_weak(),
         1 => stuff.mud_material.clone_weak(),
         2 => stuff.bronze_material.clone_weak(),
@@ -174,13 +234,13 @@ pub fn spawn_mined_block(
             PbrBundle {
                 mesh: stuff.cube_mesh.clone_weak(),
                 material,
-                transform: Transform::from_translation(coordinates),
+                transform: Transform::from_translation(block_details.coordinates()),
                 ..Default::default()
             },
             POWBlock {
-                pow_amount,
-                coordinate_string: coordinates.to_string(),
-                miner_pubkey,
+                pow_amount: block_details.pow_amount,
+                coordinate_string: block_details.coordinates.clone(),
+                miner_pubkey: block_details.miner_pubkey.clone(),
             },
         ))
         .id();
@@ -192,13 +252,8 @@ pub fn spawn_pubkey_note(
     stuff: &Res<MeshesAndMaterials>,
     unique_key: String,
 ) {
-    info!("Spawning pubkey note at: {}", unique_key);
     let (x, y, z) = extract_coordinates(&unique_key).unwrap();
     let (scaled_x, scaled_y, scaled_z) = scale_coordinates_to_world(x, y, z);
-    info!(
-        "Scaled coordinates: x: {} y: {} z: {}",
-        scaled_x, scaled_y, scaled_z
-    );
 
     commands.spawn(PbrBundle {
         mesh: stuff.pubkey_mesh.clone_weak(),

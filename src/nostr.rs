@@ -11,11 +11,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    cyberspace::extract_coordinates,
+    cyberspace::{extract_coordinates, scale_coordinates_to_world},
+    mining::POWNotes,
     resources::{
         spawn_mined_block, spawn_pubkey_note, CoordinatesMap, MeshesAndMaterials, UniqueKeys,
     },
-    POWNotes,
+    ui_camera::PowEvent,
 };
 
 #[derive(Resource, Deref, DerefMut)]
@@ -38,6 +39,14 @@ impl POWBlockDetails {
         } else {
             Vec3::new(0.0, 0.0, 0.0)
         }
+    }
+
+    pub fn display_coordinates(&self) -> String {
+        let coordinates = extract_coordinates(self.coordinates.as_str()).unwrap_or((0, 0, 0));
+        format!(
+            "X:{}, Y: {}, Z: {}",
+            coordinates.0, coordinates.1, coordinates.2
+        )
     }
 }
 
@@ -84,11 +93,12 @@ pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntim
 }
 
 pub fn websocket_middleware(
+    mut commands: Commands,
+    stuff: Res<MeshesAndMaterials>,
     incoming_notes: Res<IncomingNotes>,
     outgoing_notes: Res<OutgoingNotes>,
     pow_notes: Res<POWNotes>,
-    mut commands: Commands,
-    stuff: Res<MeshesAndMaterials>,
+    mut pow_events: EventWriter<PowEvent>,
     mut unique_keys: ResMut<UniqueKeys>,
     mut coordinates_map: ResMut<CoordinatesMap>,
 ) {
@@ -98,46 +108,47 @@ pub fn websocket_middleware(
             unique_keys.insert(note.get_pubkey().to_string());
         }
 
+        // Check if the note is a POW block with proper formatting
         if let Ok(pow_block_details) = serde_json::from_str::<POWBlockDetails>(&note.get_content())
         {
+            // Check if the coordinates aalready have a block
             if !coordinates_map.contains_key(&pow_block_details.coordinates) {
-                let spawned_block = spawn_mined_block(
-                    &mut commands,
-                    &stuff,
-                    pow_block_details.coordinates(),
-                    pow_block_details.pow_amount,
-                    pow_block_details.miner_pubkey.clone(),
-                );
+                // If not, spawn a new block
+                let spawned_block = spawn_mined_block(&mut commands, &stuff, &pow_block_details);
+                // And add it to the hashmap
                 coordinates_map.insert(
                     pow_block_details.coordinates.to_string(),
                     (spawned_block, pow_block_details.clone()),
                 );
             } else {
-
+                // Get the matching block from the hashmap
                 let existing_pow_block =
                     coordinates_map.get(&pow_block_details.coordinates).unwrap();
-
+                // Get the amount of POW for the existing block
                 let existing_entity = existing_pow_block.0;
 
+                // If the new block has more POW, replace the existing block
                 if pow_block_details.pow_amount > existing_pow_block.1.pow_amount {
-                    let spawned_block = spawn_mined_block(
-                        &mut commands,
-                        &stuff,
-                        pow_block_details.coordinates(),
-                        pow_block_details.pow_amount,
-                        pow_block_details.miner_pubkey.clone(),
-                    );
+                    // Spawn the new block
+                    let spawned_block =
+                        spawn_mined_block(&mut commands, &stuff, &pow_block_details);
+                    // Add it to the hashmap
                     coordinates_map.insert(
                         pow_block_details.coordinates.to_string(),
                         (spawned_block, pow_block_details.clone()),
                     );
+                    // Despawn the old block
                     commands.entity(existing_entity).despawn();
                 }
             }
         }
     });
 
+    // Forward the mined POW notes to the websocket
     pow_notes.try_iter().for_each(|note| {
+        if let Ok(block_details) = serde_json::from_str::<POWBlockDetails>(note.get_content()) {
+            pow_events.send(PowEvent(block_details));
+        }
         let _sent = outgoing_notes.send(note);
     });
 }

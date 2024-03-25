@@ -30,3 +30,4 @@ hex = "0.4.3"
 # Had to fork bevy-tokio-tasks to make it work with the latest bevy
 bevy-tokio-tasks = { path = "bevy-tokio-tasks"} 
 tokio-util = { version = "0.7.10", features = ["full"] }
+openssl = "0.10.64"
