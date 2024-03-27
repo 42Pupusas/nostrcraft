@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    cyberspace::{extract_coordinates, scale_coordinates_to_world},
+    cyberspace::extract_coordinates,
     mining::POWNotes,
     resources::{
         spawn_mined_block, spawn_pubkey_note, CoordinatesMap, MeshesAndMaterials, UniqueKeys,
