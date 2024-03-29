@@ -229,12 +229,14 @@ pub fn spawn_mined_block(
         _ => stuff.gold_material.clone_weak(),
     };
 
+    let coordinates = block_details.coordinates();
+
     let spawned_block = commands
         .spawn((
             PbrBundle {
                 mesh: stuff.cube_mesh.clone_weak(),
                 material,
-                transform: Transform::from_translation(block_details.coordinates()),
+                transform: Transform::from_translation(coordinates),
                 ..Default::default()
             },
             POWBlock {

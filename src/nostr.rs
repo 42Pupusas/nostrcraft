@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use bevy_tokio_tasks::TokioTasksRuntime;
+use bevy_wasm_tasks::WASMTasksRuntime;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use nostro2::{
     notes::SignedNote,
@@ -10,17 +10,40 @@ use nostro2::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::{mining::POWNotes, ui_camera::PowEvent};
+
 use crate::{
     cyberspace::extract_coordinates,
-    mining::POWNotes,
     resources::{
         spawn_mined_block, spawn_pubkey_note, CoordinatesMap, MeshesAndMaterials, UniqueKeys,
     },
-    ui_camera::PowEvent,
 };
 
-#[derive(Resource, Deref, DerefMut)]
+#[cfg(not(target_arch = "wasm32"))]
+use bevy_tokio_tasks::TokioTasksRuntime;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource)]
 pub struct IncomingNotes(pub Receiver<SignedNote>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for IncomingNotes {
+    fn default() -> Self {
+        let (sender, receiver) = unbounded();
+        IncomingNotes(receiver)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Resource)]
+pub struct IncomingNotes(pub Receiver<SignedNote>, Sender<SignedNote>);
+#[cfg(target_arch = "wasm32")]
+impl Default for IncomingNotes {
+    fn default() -> Self {
+        let (sender, receiver) = unbounded();
+        IncomingNotes(receiver, sender)
+    }
+}
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct OutgoingNotes(pub Sender<SignedNote>);
@@ -50,36 +73,44 @@ impl POWBlockDetails {
     }
 }
 
+pub fn nostr_plugin(app: &mut App) {
+    app.add_event::<PowEvent>()
+        .init_resource::<POWNotes>()
+        .init_resource::<IncomingNotes>()
+        .add_systems(Startup, websocket_thread)
+        .add_systems(Update, websocket_middleware);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntime>) {
-    let (notes_writer, notes_reader) = unbounded::<SignedNote>();
-    commands.insert_resource(IncomingNotes(notes_reader));
+    let (incoming_notes_sender, incoming_notes_receiver) = unbounded::<SignedNote>();
+    commands.insert_resource(IncomingNotes(incoming_notes_receiver));
 
     let (outgoing_notes_sender, outgoing_notes_receiver) = unbounded::<SignedNote>();
     commands.insert_resource(OutgoingNotes(outgoing_notes_sender));
 
-    runtime.spawn_background_task(|_ctx| async move {
+    runtime.spawn_background_task(|mut ctx| async move {
         if let Ok(relay) = NostrRelay::new("wss://relay.arrakis.lat").await {
-            let filter = json!({
-                "kinds": [0, 333],
-            });
-
             let relay_arc = Arc::new(relay);
-            let relay = relay_arc.clone();
 
-            relay.subscribe(filter).await.unwrap();
-
+            let relay_writer = relay_arc.clone();
             tokio::spawn(async move {
                 while let Ok(note) = outgoing_notes_receiver.recv() {
-                    let _sent = relay.send_note(note).await;
+                    info!("Sending note to relay {}", note);
+                    let _sent = relay_writer.send_note(note).await;
                 }
             });
 
-            let relay = relay_arc.clone();
+            let relay_reader = relay_arc.clone();
             tokio::spawn(async move {
-                while let Some(Ok(relay_message)) = relay.read_from_relay().await {
+                let filter = json!({
+                    "kinds": [0, 3333],
+                });
+                relay_reader.subscribe(filter).await.unwrap();
+                while let Ok(relay_message) = relay_reader.read_relay_events().await {
                     match relay_message {
                         RelayEvents::EVENT(_, _, signed_note) => {
-                            let _ = notes_writer.send(signed_note);
+                            let _sent = incoming_notes_sender.send(signed_note);
                         }
                         RelayEvents::EOSE(_, _) => {
                             info!("End of Stream Event");
@@ -89,6 +120,64 @@ pub fn websocket_thread(mut commands: Commands, runtime: ResMut<TokioTasksRuntim
                 }
             });
         }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
+
+#[cfg(target_arch = "wasm32")]
+use nostro2::{notes::Note, userkeys::UserKeys, utils::new_keys};
+
+use gloo_timers::future::TimeoutFuture;
+
+#[cfg(target_arch = "wasm32")]
+pub fn websocket_thread(mut commands: Commands, runtime: ResMut<WASMTasksRuntime>) {
+    let (outgoing_notes_sender, outgoing_notes_receiver) = unbounded::<SignedNote>();
+    commands.insert_resource(OutgoingNotes(outgoing_notes_sender));
+
+    runtime.spawn_background_task(|mut ctx| async move {
+        let nostr_relay = NostrRelay::new("wss://relay.arrakis.lat").await.unwrap();
+        let relay_arc = Arc::new(nostr_relay);
+
+        let writer = relay_arc.clone();
+        let writer_task = async move {
+            loop {
+                TimeoutFuture::new(1_000).await;
+                if let Ok(note) = outgoing_notes_receiver.try_recv() {
+                    info!("Sending note to relay");
+                    let _sent = writer.send_note(note).await;
+                } 
+            }
+        };
+        spawn_local(writer_task);
+
+        let reader = relay_arc.clone();
+
+        let reader_task = async move {
+            let filter = json!({
+                "kinds": [0, 3333],
+            });
+            reader.subscribe(filter).await.unwrap();
+            while let Ok(relay_message) = reader.read_relay_events().await {
+                match relay_message {
+                    RelayEvents::EVENT(_, _, signed_note) => {
+                        ctx.run_on_main_thread(move |ctx| {
+                            // The inner context gives access to a mutable Bevy World reference.
+                            let world: &mut World = ctx.world;
+                            let incoming_notes = world.get_resource_mut::<IncomingNotes>().unwrap();
+                            incoming_notes.1.send(signed_note).unwrap();
+                        })
+                        .await;
+                    }
+                    RelayEvents::EOSE(_, _) => {
+                        info!("End of Stream Event");
+                    }
+                    _ => {}
+                }
+            }
+        };
+        spawn_local(reader_task);
     });
 }
 
@@ -102,7 +191,7 @@ pub fn websocket_middleware(
     mut unique_keys: ResMut<UniqueKeys>,
     mut coordinates_map: ResMut<CoordinatesMap>,
 ) {
-    incoming_notes.try_iter().for_each(|note| {
+    incoming_notes.0.try_iter().for_each(|note| {
         if !unique_keys.contains(note.get_pubkey()) {
             spawn_pubkey_note(&mut commands, &stuff, note.get_pubkey().to_string());
             unique_keys.insert(note.get_pubkey().to_string());
@@ -146,9 +235,12 @@ pub fn websocket_middleware(
 
     // Forward the mined POW notes to the websocket
     pow_notes.try_iter().for_each(|note| {
+        info!("Forwarding POW note to websocket {}", note);
         if let Ok(block_details) = serde_json::from_str::<POWBlockDetails>(note.get_content()) {
             pow_events.send(PowEvent(block_details));
+            info!("Sent POW event to websocket");
         }
         let _sent = outgoing_notes.send(note);
+        info!("Sent POW note to websocket");
     });
 }

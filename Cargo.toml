@@ -12,22 +12,33 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
+
 [dependencies]
 anyhow = "1.0.79"
 bevy = { version = "0.13.0", features = [] }
-bevy-async-task = "1.4.0"
 cpal = "0.15.2"
 crossbeam-channel = "0.5.11"
+
+
 rand = "0.8.5"
-rustfft = "6.2.0"
 cryptoxide = "0.4.4"
-nostro2 = "0.1.13"
 primitive-types = "0.12.2"
 serde = "1.0.197"
 serde_json = "1.0.114"
-tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 hex = "0.4.3"
 # Had to fork bevy-tokio-tasks to make it work with the latest bevy
-bevy-tokio-tasks = { path = "bevy-tokio-tasks"} 
+nostro2 = { path = "/home/cuarentaydos/Code/NOSTR/onosendai/NostrCraft/NostrO2"}
+wasm-bindgen = "= 0.2.92"
+bevy-wasm-tasks = "0.13.0"
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 tokio-util = { version = "0.7.10", features = ["full"] }
+bevy-tokio-tasks = { path = "bevy-tokio-tasks"} 
 openssl = "0.10.64"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.42"

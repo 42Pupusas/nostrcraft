@@ -11,14 +11,13 @@ use crate::{
 
 pub fn ui_camera_plugin(app: &mut App) {
     app.init_resource::<AvatarListDetails>()
-        .add_event::<PowEvent>()
         .add_systems(
             PostStartup,
             (setup_coordinate_ui, setup_avatar_list, setup_mining_ui),
         )
         .add_systems(
             Update,
-            (update_coordinate_ui, update_avatar_list, update_mining_ui),
+            (update_coordinate_ui, update_avatar_list),
         );
 }
 
@@ -134,15 +133,23 @@ fn update_avatar_list(
     mut avatar_list: ResMut<AvatarListDetails>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    if unique_keys.len() == 0 {
+    if unique_keys.len() < 5 {
         return;
     }
 
     let keys_vec: Vec<&String> = unique_keys.iter().collect(); // Convert HashSet to Vec
+                                                               
+     if keys_vec.is_empty() {
+        return;
+    }
 
     let list_len = keys_vec.len();
     let middle_index = 2; // Middle index for a list of 5 items
     let selected_index = (avatar_list.selected + list_len / 2) % list_len; // Calculate selected index based on list length and ensure it's in the middle
+
+     if list_len == 0 {
+        return; // Return early if the list length is zero
+    }
 
     for (i, _key) in (0..5).enumerate() {
         let index = (selected_index + i + list_len - middle_index) % list_len;
@@ -259,6 +266,7 @@ fn setup_mining_ui(mut commands: Commands, nostr_signer: Res<UserNostrKeys>) {
 #[derive(Event)]
 pub struct PowEvent(pub POWBlockDetails);
 
+#[cfg(not(target_arch = "wasm32"))]
 fn update_mining_ui(
     mut text_query: Query<(&mut Text, &UiElement)>,
     mining_state: Res<State<MiningState>>,

@@ -1,5 +1,4 @@
-use bevy::prelude::*;
-use bevy_tokio_tasks::TokioTasksPlugin;
+use bevy::{prelude::*, window::WindowMode};
 
 mod cyberspace;
 
@@ -10,17 +9,27 @@ mod ui_camera;
 
 mod mining;
 use cyberspace::{extract_coordinates, scale_coordinates_to_world};
+
 use mining::mining_plugin;
 
 mod resources;
+use nostr::nostr_plugin;
 use nostro2::userkeys::UserKeys;
 use resources::world_plugin;
 
 mod nostr;
+
+#[cfg(not(target_arch = "wasm32"))]
 use nostr::{websocket_middleware, websocket_thread};
 
+#[cfg(not(target_arch = "wasm32"))]
+use bevy_tokio_tasks::TokioTasksPlugin;
+
+#[cfg(not(target_arch = "wasm32"))]
 use openssl::ec::EcKey;
+
 use std::sync::Arc;
+
 use ui_camera::ui_camera_plugin;
 
 fn main() {
@@ -31,9 +40,10 @@ fn main() {
                     title: "NostrCraft".into(),
                     prevent_default_event_handling: true,
                     focused: true,
-                    resizable: true,
                     decorations: false,
                     transparent: true,
+                    resizable: true,
+                    mode: WindowMode::Fullscreen,
                     ..default()
                 }),
                 ..default()
@@ -50,16 +60,29 @@ fn main() {
             // bevy::diagnostic::SystemInformationDiagnosticsPlugin::default(),
         ))
         .init_resource::<UserNostrKeys>()
-        .add_systems(Startup, websocket_thread)
         .add_systems(PostStartup, add_sample_blocks)
-        .add_systems(Update, websocket_middleware)
-        .add_plugins((camera_plugin, world_plugin, mining_plugin, ui_camera_plugin))
-        .add_plugins(TokioTasksPlugin::default())
+        .add_plugins((
+            camera_plugin,
+            world_plugin,
+            ui_camera_plugin,
+            nostr_plugin,
+            task_runners,
+            mining_plugin,
+        ))
         .run();
 }
 
 const PEM_FILE_PATH: &str = "./nostr.pem";
 const DEFULT_KEYPAIR: &str = "55BE2A31916E238A5D21F44DEAF7FA2579D11EEEB98D022842A15A2C7AF2F106";
+
+fn task_runners(app: &mut App) {
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(TokioTasksPlugin::default());
+
+    #[cfg(target_arch = "wasm32")]
+    app.add_plugins(bevy_wasm_tasks::WASMTasksPlugin);
+
+}
 
 #[derive(Resource)]
 struct UserNostrKeys {
@@ -110,19 +133,30 @@ impl Default for UserNostrKeys {
             public_key: default_pubkey,
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         let pem_file = std::fs::read(PEM_FILE_PATH);
+
+        #[cfg(not(target_arch = "wasm32"))]
         if pem_file.is_err() {
             return default_keys;
         }
+        #[cfg(not(target_arch = "wasm32"))]
         let pem_file = pem_file.unwrap();
 
+        #[cfg(not(target_arch = "wasm32"))]
         let buffer = EcKey::private_key_from_pem(&pem_file);
+        #[cfg(not(target_arch = "wasm32"))]
         if buffer.is_err() {
             return default_keys;
         }
+        #[cfg(not(target_arch = "wasm32"))]
         let buffer = buffer.unwrap();
 
+        #[cfg(not(target_arch = "wasm32"))]
         let keypair = UserKeys::new(&buffer.private_key().to_hex_str().unwrap());
+        #[cfg(target_arch = "wasm32")]
+        let keypair = UserKeys::new(DEFULT_KEYPAIR);
+
         if keypair.is_err() {
             return default_keys;
         }

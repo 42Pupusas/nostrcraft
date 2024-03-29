@@ -5,22 +5,25 @@ use bevy::{prelude::*, utils::HashMap};
 use rand::Rng;
 
 use crate::{
-    cameras::BlockIndicator,
-    cyberspace::encode_coordinates,
-    nostr::POWBlockDetails,
-    resources::MeshesAndMaterials,
-    UserNostrKeys,
+    cameras::BlockIndicator, cyberspace::encode_coordinates, nostr::POWBlockDetails,
+    resources::MeshesAndMaterials, UserNostrKeys,
 };
-use bevy_tokio_tasks::TokioTasksRuntime;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use cryptoxide::digest::Digest;
 use cryptoxide::sha2::Sha256;
+
 use nostro2::{
     notes::{Note, SignedNote},
     userkeys::UserKeys,
 };
+
 use serde_json::json;
+
+#[cfg(not(target_arch = "wasm32"))]
+use bevy_tokio_tasks::TokioTasksRuntime;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_util::sync::CancellationToken;
 
 pub fn mining_plugin(app: &mut App) {
@@ -65,7 +68,6 @@ fn mining_trigger(
     }
 }
 
-
 #[derive(Resource, Deref, DerefMut)]
 pub struct POWNotes(pub Receiver<SignedNote>);
 
@@ -76,6 +78,109 @@ impl Default for POWNotes {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
+
+#[cfg(target_arch = "wasm32")]
+use crate::nostr::OutgoingNotes;
+
+#[cfg(target_arch = "wasm32")]
+use bevy_wasm_tasks::WASMTasksRuntime;
+
+#[cfg(target_arch = "wasm32")]
+fn mining_system(
+    mut commands: Commands,
+    mut unmined_block_map: ResMut<UnminedBlockMap>,
+    user_keys: Res<UserNostrKeys>,
+    outgoing_notes: ResMut<OutgoingNotes>,
+    runtime: ResMut<WASMTasksRuntime>,
+) {
+    if unmined_block_map.len() == 0 {
+        return;
+    }
+    // This channel is used to send the mined blocks to the websocket thread
+    // for broadcasting to the relay network
+
+    let (pow_notes_writer, pow_notes_reader) = unbounded::<SignedNote>();
+    commands.insert_resource(POWNotes(pow_notes_reader));
+
+    // This channel is used to send a cancellation signal to the mining threads
+    let (sender, receiver) = unbounded::<MiningEvent>();
+    commands.insert_resource(MiningChannel(sender));
+
+    // Build a list of blocks to mine
+    let mut blocks = Vec::new();
+    for (key, entity) in unmined_block_map.iter() {
+        blocks.push(key.clone());
+        // Remove the block from the scene so it doesn't get mined again
+        commands.entity(*entity).despawn();
+    }
+    // Clear the hashmap
+    unmined_block_map.clear();
+    let user_keys = user_keys.get_keypair();
+    runtime.spawn_background_task(|_ctx| async move {
+        let writer_arc = Arc::new(pow_notes_writer);
+
+        // We spawn a mining thread for each block
+        for block in blocks {
+            let writer_arc_clone = writer_arc.clone();
+            let key_ref = user_keys.clone();
+
+            let mining_thread = async move {
+                mine_pow_event(block, writer_arc_clone, key_ref).await;
+            };
+            spawn_local(mining_thread);
+        }
+
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn mine_pow_event(
+    coordinate: String,
+    writer_arc_clone: Arc<Sender<SignedNote>>,
+    key_ref: Arc<UserKeys>,
+) {
+    let mut pow: usize = 0;
+    info!("Starting POW Miner");
+    let mut block_details = POWBlockDetails {
+        pow_amount: pow,
+        coordinates: coordinate.clone(),
+        miner_pubkey: key_ref.get_public_key(),
+    };
+
+    loop {
+        let mut pow_note = Note::new(
+            &key_ref.get_public_key(),
+            334,
+            &json!(block_details).to_string(),
+        );
+        let nonce = generate_nonce();
+        pow_note.add_tag("nonce", &hex::encode(nonce));
+        let json_str = pow_note.serialize_for_nostr();
+
+        // Compute the SHA256 hash of the serialized JSON string
+        let mut hasher = Sha256::new();
+        hasher.input_str(&json_str);
+        let mut result = [0u8; 32];
+        hasher.result(&mut result);
+
+        let pow_id = hex::encode(result);
+
+        let leading_zeroes_in_id = pow_id.chars().take_while(|c| c == &'0').count();
+        if leading_zeroes_in_id > pow {
+            pow = leading_zeroes_in_id;
+            block_details.pow_amount = pow;
+            let signed_note = key_ref.sign_nostr_event(pow_note);
+            info!("Sending POW block with {} leading zeroes", pow);
+            let _sent = writer_arc_clone.send(signed_note);
+            info!("Sent POW block with {} leading zeroes", pow);
+        }
+    }
+    info!("Stopping POW Miner");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn mining_system(
     runtime: ResMut<TokioTasksRuntime>,
     mut commands: Commands,
@@ -84,6 +189,7 @@ fn mining_system(
 ) {
     // This channel is used to send the mined blocks to the websocket thread
     // for broadcasting to the relay network
+
     let (pow_notes_writer, pow_notes_reader) = unbounded::<SignedNote>();
     commands.insert_resource(POWNotes(pow_notes_reader));
 
@@ -134,6 +240,7 @@ fn mining_system(
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn mine_pow_event(
     coordinate: String,
     writer_arc_clone: Arc<Sender<SignedNote>>,
@@ -150,12 +257,12 @@ async fn mine_pow_event(
 
     while !cancel_token.is_cancelled() {
         let mut pow_note = Note::new(
-            key_ref.get_public_key(),
-            333,
+            &key_ref.get_public_key(),
+            3333,
             &json!(block_details).to_string(),
         );
         let nonce = generate_nonce();
-        pow_note.tag_note("nonce", &hex::encode(nonce));
+        pow_note.add_tag("nonce", &hex::encode(nonce));
         let json_str = pow_note.serialize_for_nostr();
 
         // Compute the SHA256 hash of the serialized JSON string
@@ -176,6 +283,7 @@ async fn mine_pow_event(
     }
     info!("Stopping POW Miner");
 }
+
 
 fn generate_nonce() -> [u8; 16] {
     // Define the symbols allowed in the nonce
